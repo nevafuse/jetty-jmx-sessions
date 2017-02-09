@@ -20,22 +20,15 @@ package org.eclipse.jetty.server.session;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.ObjectOutputStream;
 import java.lang.Double;
 import java.lang.Exception;
 import java.lang.Integer;
-import java.rmi.registry.LocateRegistry;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Enumeration;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -91,6 +84,7 @@ public class JMXHashSessionManager extends AbstractSessionManager implements JMX
     AtomicLong _savePeriodMs = new AtomicLong(0L); //don't do period saves by default
     private Scheduler.Task _saveTask;
     private AtomicBoolean _sessionsLoaded = new AtomicBoolean(false);
+	private AtomicBoolean _retry = new AtomicBoolean(false);
 	private JMXConnector jmxc = null;
 	AtomicInteger _alertCnt = new AtomicInteger(0);
 	
@@ -261,6 +255,12 @@ public class JMXHashSessionManager extends AbstractSessionManager implements JMX
 		LOG.info("reseting sessions last saved to zero");
 		for (JMXHashedSession session : _sessions.values())
             session.setLastSaved(0L);
+		
+		// restarting timer when it has scavenger period
+		if (_timer != null && _timer.isRunning() && _retry.get() && (_saveTask == null || _saveTask.cancel())) {
+			_retry.set(false);
+            _saveTask = _timer.schedule(new Saver(), 1, TimeUnit.MILLISECONDS);
+		}
 	}
 	
 	@ManagedOperation("returns specified percentile size of all sessions in bytes")
@@ -373,6 +373,8 @@ public class JMXHashSessionManager extends AbstractSessionManager implements JMX
 					saveSessions(mbeanProxy);
 				}
 				_sessionSavePeriodStats.set(System.currentTimeMillis()-start);
+				if (_retry.get())
+					_retry.set(false);
             }
             catch (Exception e)
             {       
@@ -384,6 +386,7 @@ public class JMXHashSessionManager extends AbstractSessionManager implements JMX
 				
 				// use scavenger period because there are connection problems
 				periodMs = _scavengePeriodMs.longValue();
+				_retry.set(true);
 				
             } finally {
 				if (_timer != null && _timer.isRunning())
@@ -743,6 +746,12 @@ public class JMXHashSessionManager extends AbstractSessionManager implements JMX
 				}
 			}
 		}
+		
+		// restarting timer when it has scavenger period
+		if (_timer != null && _timer.isRunning() && _retry.get() && (_saveTask == null || _saveTask.cancel())) {
+			_retry.set(false);
+            _saveTask = _timer.schedule(new Saver(), 1, TimeUnit.MILLISECONDS);
+		}
 	}
 	
     @Override
@@ -763,7 +772,7 @@ public class JMXHashSessionManager extends AbstractSessionManager implements JMX
 			session = (JMXHashedSession) newSession(created, accessed, clusterId);
 			//session.getAttributeMap().putAll(curAttributes);
 			session.setNodeId(nodeId);
-			//session.setMaxInactiveInterval(maxInactiveInterval);
+			session.setMaxInactiveInterval(getMaxInactiveInterval());
 			addSession(session, true);
 			//session.didActivate();
 			if (LOG.isDebugEnabled())
@@ -795,7 +804,9 @@ public class JMXHashSessionManager extends AbstractSessionManager implements JMX
 			
 			ByteArrayInputStream bais = new ByteArrayInputStream(bytes);
 			ClassLoadingObjectInputStream ois = new ClassLoadingObjectInputStream(bais);
+			@SuppressWarnings("unchecked")
 			Map<String,Object> o = (Map<String,Object>)ois.readObject();
+			ois.close();
 			for (Map.Entry<String, Object> entry : o.entrySet())
 			{
 				session.setAttribute(entry.getKey(), entry.getValue());
@@ -813,6 +824,12 @@ public class JMXHashSessionManager extends AbstractSessionManager implements JMX
 		
 		//addSession(session,false);
 		//_sessionsStats.reset(_sessions.size());
+		
+		// restarting timer when it has scavenger period
+		if (_timer != null && _timer.isRunning() && _retry.get() && (_saveTask == null || _saveTask.cancel())) {
+			_retry.set(false);
+            _saveTask = _timer.schedule(new Saver(), 1, TimeUnit.MILLISECONDS);
+		}
 	}
 
     /* ------------------------------------------------------------ */

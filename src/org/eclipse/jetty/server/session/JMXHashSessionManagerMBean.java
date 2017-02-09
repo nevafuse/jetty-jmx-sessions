@@ -19,9 +19,6 @@
 package org.eclipse.jetty.server.session;
 
 import java.lang.Exception;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
 		   
 public interface JMXHashSessionManagerMBean
 {
